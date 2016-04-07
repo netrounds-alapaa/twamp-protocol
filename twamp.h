@@ -165,7 +165,7 @@ typedef struct twamp_stop {
 /*                                       */
 /*****************************************/
 
-#define TST_PKT_SIZE 512
+#define TST_PKT_SIZE 1518
 
 /* Session-Sender TWAMP-Test packet for Unauthenticated mode */
 typedef struct test_packet {

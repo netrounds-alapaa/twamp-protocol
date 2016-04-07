@@ -8,11 +8,14 @@
  * Note: contains the TWAMP server implementation
  *
  */
+#include <sys/types.h>
+#undef __FD_SETSIZE
+#define __FD_SETSIZE 4096
+#include <sys/select.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -20,9 +23,10 @@
 
 #include "twamp.h"
 
-#define MAX_CLIENTS 10
+#define MAX_CLIENTS 3000
 #define MAX_SESSIONS_PER_CLIENT 10
 #define PORTBASE	20000
+#define MAX_NR_SOCKETS 10000
 
 typedef enum {
     kOffline = 0,
@@ -34,6 +38,7 @@ typedef enum {
 struct active_session {
     int socket;
     RequestSession req;
+    uint32_t seq_nr;
 };
 
 struct client_info {
@@ -45,6 +50,7 @@ struct client_info {
     struct active_session sessions[MAX_SESSIONS_PER_CLIENT];
 };
 
+int accept_count = 0;
 static int fd_max = 0;
 static int port_min = PORTBASE;
 static int port_max = PORTBASE + 1000;
@@ -116,6 +122,7 @@ static void cleanup_client(struct client_info *client)
             FD_CLR(client->sessions[i].socket, &read_fds);
             close(client->sessions[i].socket);
             client->sessions[i].socket = -1;
+            client->sessions[i].seq_nr = 0;
             used_sockets--;
         }
     memset(client, 0, sizeof(struct client_info));
@@ -130,7 +137,10 @@ static int find_empty_client(struct client_info *clients, int max_clients)
     int i;
     for (i = 0; i < max_clients; i++)
         if (clients[i].status == kOffline)
+        {
             return i;
+        }
+
     return -1;
 }
 
@@ -261,7 +271,7 @@ static int send_accept_session(struct client_info *client, RequestSession * req)
     memset(&acc, 0, sizeof(acc));
 
     /* Check if there are any slots available */
-    if ((used_sockets < 64) && (client->sess_no < MAX_SESSIONS_PER_CLIENT)) {
+    if ((used_sockets < MAX_NR_SOCKETS) && (client->sess_no < MAX_SESSIONS_PER_CLIENT)) {
         int testfd = socket(AF_INET, SOCK_DGRAM, 0);
         if (testfd < 0) {
             fprintf(stderr, "[%s] ", inet_ntoa(client->addr.sin_addr));
@@ -323,7 +333,7 @@ static int receive_test_message(struct client_info *client, int session_index)
 {
     struct sockaddr_in addr;
     socklen_t len = sizeof(addr);
-    static uint32_t seq_nr = 0;
+    //static uint32_t seq_nr = 0;
 
     ReflectorUPacket pack_reflect;
     memset(&pack_reflect, 0, sizeof(pack_reflect));
@@ -347,8 +357,8 @@ static int receive_test_message(struct client_info *client, int session_index)
         return rv;
     }
 
-    printf("Received TWAMP-Test message from %s\n", inet_ntoa(addr.sin_addr));
-    pack_reflect.seq_number = htonl(seq_nr++);
+    //printf("Received TWAMP-Test message from %s\n", inet_ntoa(addr.sin_addr));
+    pack_reflect.seq_number = htonl(client->sessions[session_index].seq_nr++);
     pack_reflect.error_estimate = 0x100;  // Multiplier = 1
     pack_reflect.sender_seq_number = pack.seq_number;
     pack_reflect.sender_time = pack.time;
@@ -377,16 +387,17 @@ static int receive_test_message(struct client_info *client, int session_index)
 
 int main(int argc, char *argv[])
 {
+    printf("Modified select() fd setsize: %d\n", __FD_SETSIZE);
     char *progname = NULL;
     srand(time(NULL));
     /* Obtain the program name without the full path */
     progname = (progname = strrchr(argv[0], '/')) ? progname + 1 : *argv;
 
     /* Sanity check */
-    if (getuid() == 0) {
-        fprintf(stderr, "%s should not be run as root\n", progname);
-        exit(EXIT_FAILURE);
-    }
+    /* if (getuid() == 0) { */
+    /*     fprintf(stderr, "%s should not be run as root\n", progname); */
+    /*     exit(EXIT_FAILURE); */
+    /* } */
 
     /* Parse options */
     if (parse_options(progname, argc, argv)) {
@@ -404,6 +415,13 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
+    int yes = 1;
+    if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1)
+    {
+        perror("Setting SO_REUSEADDR failed");
+        exit(EXIT_FAILURE);
+    }
+
     /* Set Server address and bind on the TWAMP port */
     struct sockaddr_in serv_addr;
     memset(&serv_addr, 0, sizeof(serv_addr));
@@ -418,10 +436,12 @@ int main(int argc, char *argv[])
     }
 
     /* Start listening on the TWAMP port for new TWAMP-Control connections */
-    if (listen(listenfd, MAX_CLIENTS)) {
+    if (listen(listenfd, 128)) {
         perror("Error on listen");
         exit(EXIT_FAILURE);
     }
+
+    printf("Listening on port %d\n", SERVER_PORT);
 
     FD_ZERO(&read_fds);
     FD_SET(listenfd, &read_fds);
@@ -437,6 +457,7 @@ int main(int argc, char *argv[])
     FD_ZERO(&tmp_fds);
 
     int rv;
+    printf("FD_SETSIZE %d\n", FD_SETSIZE);
     while (1) {
         tmp_fds = read_fds;
         if (select(fd_max + 1, &tmp_fds, NULL, NULL, NULL) < 0) {
@@ -450,10 +471,11 @@ int main(int argc, char *argv[])
         if (FD_ISSET(listenfd, &tmp_fds)) {
             uint32_t client_len = sizeof(client_addr);
             if ((newsockfd = accept(listenfd,
-                                    (struct sockaddr *)&client_addr, 
+                                    (struct sockaddr *)&client_addr,
                                     &client_len)) < 0) {
                 perror("Error in accept");
             } else {
+                printf("Accept count: %d, used sockets %d ", accept_count++, used_sockets);
                 /* Add a new client if there are any slots available */
                 int pos = find_empty_client(clients, MAX_CLIENTS);
                 uint8_t mode_mask = 0;
@@ -468,6 +490,11 @@ int main(int argc, char *argv[])
                     if (newsockfd > fd_max)
                         fd_max = newsockfd;
                     mode_mask = 0xFF;
+                }
+                else
+                {
+                    fprintf(stderr, "---------NO FREE CLIENT SLOTS!!!");
+                    exit(1);
                 }
                 rv = send_greeting(mode_mask, &clients[pos]);
             }
@@ -518,16 +545,18 @@ int main(int argc, char *argv[])
                         break;
                     case kTesting:
                         /* In this state can only receive a StopSessions msg */
-                        memset(buffer, 0, 4096);
-                        rv = recv(clients[i].socket, buffer, 4096, 0);
-                        if (rv <= 0) {
-                            cleanup_client(&clients[i]);
-                            break;
-                        }
-                        if (buffer[0] == kStopSessions) {
-                            rv = receive_stop_sessions(&clients[i],
-                                                       (StopSessions *) buffer);
-                        }
+                        /* memset(buffer, 0, 4096); */
+                        /* printf("waiting for stopsess"); */
+                        /* rv = recv(clients[i].socket, buffer, 4096, 0); */
+                        /* printf("got recv"); */
+                        /* if (rv <= 0) { */
+                        /*     cleanup_client(&clients[i]); */
+                        /*     break; */
+                        /* } */
+                        /* if (buffer[0] == kStopSessions) { */
+                        /*     rv = receive_stop_sessions(&clients[i], */
+                        /*                                (StopSessions *) buffer); */
+                        /* } */
                         break;
                     default:
                         break;
