@@ -26,7 +26,7 @@
 #define MAX_CLIENTS 3000
 #define MAX_SESSIONS_PER_CLIENT 10
 #define PORTBASE	20000
-#define MAX_NR_SOCKETS 10000
+#define MAX_NR_SOCKETS 3000
 
 typedef enum {
     kOffline = 0,
@@ -49,6 +49,8 @@ struct client_info {
     struct timeval shutdown_time;
     struct active_session sessions[MAX_SESSIONS_PER_CLIENT];
 };
+
+struct client_info clients[MAX_CLIENTS];
 
 int accept_count = 0;
 static int fd_max = 0;
@@ -255,14 +257,14 @@ static int receive_start_sessions(struct client_info *client,
 /* This functions treats the case when a StopSessions is received from
  * the Control-Client to end all the Test sessions.
  */
-static int receive_stop_sessions(struct client_info *client,
-                                 StopSessions * req)
-{
-    /* If a StopSessions message was received, it can still receive Test packets
-     * until the timeout has expired */
-    gettimeofday(&client->shutdown_time, NULL);
-    return 0;
-}
+/* static int receive_stop_sessions(struct client_info *client, */
+/*                                  StopSessions * req) */
+/* { */
+/*     /\* If a StopSessions message was received, it can still receive Test packets */
+/*      * until the timeout has expired *\/ */
+/*     gettimeofday(&client->shutdown_time, NULL); */
+/*     return 0; */
+/* } */
 
 /* Computes the response to a RequestTWSession message */
 static int send_accept_session(struct client_info *client, RequestSession * req)
@@ -446,8 +448,6 @@ int main(int argc, char *argv[])
     FD_ZERO(&read_fds);
     FD_SET(listenfd, &read_fds);
     fd_max = listenfd;
-
-    struct client_info clients[MAX_CLIENTS];
 
     memset(clients, 0, MAX_CLIENTS * sizeof(struct client_info));
 
