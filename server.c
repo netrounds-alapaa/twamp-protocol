@@ -8,9 +8,9 @@
  * Note: contains the TWAMP server implementation
  *
  */
-#include <sys/types.h>
 #undef __FD_SETSIZE
 #define __FD_SETSIZE 4096
+#include <sys/types.h>
 #include <sys/select.h>
 #include <stdio.h>
 #include <string.h>
@@ -24,7 +24,7 @@
 #include "twamp.h"
 
 #define MAX_CLIENTS 3000
-#define MAX_SESSIONS_PER_CLIENT 10
+#define MAX_SESSIONS_PER_CLIENT 1
 #define PORTBASE	20000
 #define MAX_NR_SOCKETS 3000
 
@@ -113,7 +113,7 @@ static int parse_options(char *progname, int argc, char *argv[])
  */
 static void cleanup_client(struct client_info *client)
 {
-    fprintf(stderr, "Cleanup client %s\n", inet_ntoa(client->addr.sin_addr));
+    fprintf(stderr, "Cleanup client %s, socket %d\n", inet_ntoa(client->addr.sin_addr), client->socket);
     FD_CLR(client->socket, &read_fds);
     close(client->socket);
     used_sockets--;
@@ -169,8 +169,8 @@ static int send_greeting(uint8_t mode_mask, struct client_info *client)
         perror("Failed to send ServerGreeting message");
         cleanup_client(client);
     } else {
-        printf("Sent ServerGreeting message to %s. Result %d\n",
-               inet_ntoa(client->addr.sin_addr), rv);
+        //printf("Sent ServerGreeting message to %s. Result %d\n",
+        //       inet_ntoa(client->addr.sin_addr), rv);
     }
     return rv;
 }
@@ -189,8 +189,8 @@ static int receive_greet_response(struct client_info *client)
         perror("Failed to receive SetUpResponse");
         cleanup_client(client);
     } else {
-        printf("Received SetUpResponse message from %s with mode %d. Result %d\n",
-               inet_ntoa(client->addr.sin_addr), resp.Mode, rv);
+        //printf("Received SetUpResponse message from %s with mode %d. Result %d\n",
+        //       inet_ntoa(client->addr.sin_addr), resp.Mode, rv);
     }
     return rv;
 }
@@ -212,8 +212,8 @@ static int send_start_serv(struct client_info *client, TWAMPTimestamp StartTime)
         cleanup_client(client);
     } else {
         client->status = kConfigured;
-        printf("ServerStart message sent to %s\n",
-               inet_ntoa(client->addr.sin_addr));
+        //printf("ServerStart message sent to %s\n",
+        //       inet_ntoa(client->addr.sin_addr));
     }
     return rv;
 }
@@ -228,8 +228,10 @@ static int send_start_ack(struct client_info *client)
     if (rv <= 0) {
         fprintf(stderr, "[%s] ", inet_ntoa(client->addr.sin_addr));
         perror("Failed to send StartACK message");
-    } else
-        printf("StartACK message sent to %s\n", inet_ntoa(client->addr.sin_addr));
+    } else{
+        //printf("StartACK message sent to %s\n",
+        //inet_ntoa(client->addr.sin_addr));
+    }
     return rv;
 }
 
@@ -257,14 +259,14 @@ static int receive_start_sessions(struct client_info *client,
 /* This functions treats the case when a StopSessions is received from
  * the Control-Client to end all the Test sessions.
  */
-/* static int receive_stop_sessions(struct client_info *client, */
-/*                                  StopSessions * req) */
-/* { */
-/*     /\* If a StopSessions message was received, it can still receive Test packets */
-/*      * until the timeout has expired *\/ */
-/*     gettimeofday(&client->shutdown_time, NULL); */
-/*     return 0; */
-/* } */
+static int receive_stop_sessions(struct client_info *client,
+                                 StopSessions * req)
+{
+    /* If a StopSessions message was received, it can still receive Test packets
+     * until the timeout has expired */
+    gettimeofday(&client->shutdown_time, NULL);
+    return 0;
+}
 
 /* Computes the response to a RequestTWSession message */
 static int send_accept_session(struct client_info *client, RequestSession * req)
@@ -317,7 +319,7 @@ static int send_accept_session(struct client_info *client, RequestSession * req)
 static int receive_request_session(struct client_info *client,
                                    RequestSession * req)
 {
-    printf("Received RequestTWSession from %s\n", inet_ntoa(client->addr.sin_addr));
+    //printf("Received RequestTWSession from %s\n", inet_ntoa(client->addr.sin_addr));
     int rv = send_accept_session(client, req);
     if (rv <= 0) {
         fprintf(stderr, "[%s] ", inet_ntoa(client->addr.sin_addr));
@@ -390,6 +392,7 @@ static int receive_test_message(struct client_info *client, int session_index)
 int main(int argc, char *argv[])
 {
     printf("Modified select() fd setsize: %d\n", __FD_SETSIZE);
+    printf("sizeof(fd_set) %lu", sizeof(fd_set));
     char *progname = NULL;
     srand(time(NULL));
     /* Obtain the program name without the full path */
@@ -475,7 +478,7 @@ int main(int argc, char *argv[])
                                     &client_len)) < 0) {
                 perror("Error in accept");
             } else {
-                printf("Accept count: %d, used sockets %d ", accept_count++, used_sockets);
+                //printf("Accept count: %d, used sockets %d ", accept_count++, used_sockets);
                 /* Add a new client if there are any slots available */
                 int pos = find_empty_client(clients, MAX_CLIENTS);
                 uint8_t mode_mask = 0;
@@ -544,19 +547,18 @@ int main(int argc, char *argv[])
                             cleanup_client(&clients[i]);
                         break;
                     case kTesting:
-                        /* In this state can only receive a StopSessions msg */
-                        /* memset(buffer, 0, 4096); */
-                        /* printf("waiting for stopsess"); */
-                        /* rv = recv(clients[i].socket, buffer, 4096, 0); */
-                        /* printf("got recv"); */
-                        /* if (rv <= 0) { */
-                        /*     cleanup_client(&clients[i]); */
-                        /*     break; */
-                        /* } */
-                        /* if (buffer[0] == kStopSessions) { */
-                        /*     rv = receive_stop_sessions(&clients[i], */
-                        /*                                (StopSessions *) buffer); */
-                        /* } */
+                        // In this state can only receive a StopSessions msg
+                        memset(buffer, 0, 4096);
+                        //printf("waiting for stopsess, sock %d\n", clients[i].socket);
+                        rv = recv(clients[i].socket, buffer, 4096, 0);
+                        if (rv <= 0) {
+                            cleanup_client(&clients[i]);
+                            break;
+                        }
+                        if (buffer[0] == kStopSessions) {
+                            rv = receive_stop_sessions(&clients[i],
+                                                       (StopSessions *) buffer);
+                        }
                         break;
                     default:
                         break;
