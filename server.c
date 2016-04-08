@@ -8,9 +8,11 @@
  * Note: contains the TWAMP server implementation
  *
  */
-#undef __FD_SETSIZE
-#define __FD_SETSIZE 4096
 #include <sys/types.h>
+//#undef __FD_SETSIZE
+//#define __FD_SETSIZE 4096
+// The above needs to be hacked in sys/select.h (In Solaris and BSD, you don't
+// need to hack system headers...
 #include <sys/select.h>
 #include <stdio.h>
 #include <string.h>
@@ -20,6 +22,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <time.h>
+#include <assert.h>
 
 #include "twamp.h"
 
@@ -391,6 +394,7 @@ static int receive_test_message(struct client_info *client, int session_index)
 
 int main(int argc, char *argv[])
 {
+    assert(sizeof(fd_set) == 512);
     printf("Modified select() fd setsize: %d\n", __FD_SETSIZE);
     printf("sizeof(fd_set) %lu", sizeof(fd_set));
     char *progname = NULL;
