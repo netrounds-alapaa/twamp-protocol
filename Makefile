@@ -15,7 +15,7 @@ client:
 	$(CC) -o $(PROGRAM2) $(SRC2) $(SRCS) $(CCFLAGS)
 
 setcap:
-	sudo setcap 'cap_net_bind_service=+ep' ./server
+	setcap 'cap_net_bind_service=+ep' ./server
 
 runserver:
 	./server

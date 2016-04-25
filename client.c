@@ -158,12 +158,6 @@ int main(int argc, char *argv[])
     struct sockaddr_in serv_addr;
     struct hostent *server = NULL;
 
-    /* Sanity check */
-    if (getuid() == 0) {
-        fprintf(stderr, "%s should not be run as root\n", progname);
-        exit(EXIT_FAILURE);
-    }
-
     /* Check client options */
     if (parse_options(&server, progname, argc, argv)) {
         usage(progname);

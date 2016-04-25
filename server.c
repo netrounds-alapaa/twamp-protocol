@@ -28,7 +28,7 @@
 
 #define MAX_CLIENTS 3000
 #define MAX_SESSIONS_PER_CLIENT 1
-#define PORTBASE	20000
+#define DEFAULT_TEST_PORT 20000
 #define MAX_NR_SOCKETS 3000
 
 typedef enum {
@@ -57,8 +57,8 @@ struct client_info clients[MAX_CLIENTS];
 
 int accept_count = 0;
 static int fd_max = 0;
-static int port_min = PORTBASE;
-static int port_max = PORTBASE + 1000;
+static int test_port = DEFAULT_TEST_PORT;
+static int port_override = 0;
 static enum Mode authmode = kModeUnauthenticated;
 static int used_sockets = 0;
 static fd_set read_fds;
@@ -71,7 +71,8 @@ static void usage(char *progname)
 
     fprintf(stderr,
             "	-a authmode		Default is Unauthenticated\n"
-            "	-p port_min		Port range for Test receivers based on port_min\n"
+            "	-p t_port		Custom TWAMP test port. Default port 2000 is used if not specified\n"
+            "	-P c_port  		Custom TWAMP control port. Default port 862 is used if not specified\n"
             "	-h         		Print this help message and exits\n");
     return;
 }
@@ -79,13 +80,13 @@ static void usage(char *progname)
 /* Parses the command line arguments for the server */
 static int parse_options(char *progname, int argc, char *argv[])
 {
-    int opt;
-    if (argc < 1 || argc > 3) {
-        fprintf(stderr, "Wrong number of arguments for %s\n", progname);
+    int opt, c_port;
+    if (argc < 1 || argc > 5) {
+        fprintf(stderr, "Wrong number of arguments for %s. Number of arguments - %d\n", progname, argc);
         return 1;
     }
 
-    while ((opt = getopt(argc, argv, "a:p:h")) != -1) {
+    while ((opt = getopt(argc, argv, "a:p:P:h")) != -1) {
         switch (opt) {
         case 'a':
             /* For now only unauthenticated mode is supported */
@@ -93,13 +94,16 @@ static int parse_options(char *progname, int argc, char *argv[])
             authmode = kModeUnauthenticated;
             break;
         case 'p':
-            /* Set port min */
-            port_min = atoi(optarg);
-            /* We don't allow ports less than 1024 (or negative) or greater than
-             * 65000 because we choose a port random with rand() % 1000 */
-            if (port_min < 1024 || port_min > (65535 - 1000))
-                port_min = PORTBASE;
-            port_max = port_min + 1000;
+            /* Set custom test port if required*/
+            test_port = atoi(optarg);
+            if (test_port < 1024 || test_port > (65535))
+                test_port = DEFAULT_TEST_PORT;
+            break;
+        case 'P':
+            /* Set custom control port if required */
+            c_port = atoi(optarg);
+            if ((c_port > 1024 || c_port < 65535) && (c_port != test_port))
+                port_override = c_port;
             break;
         case 'h':
         default:
@@ -295,7 +299,7 @@ static int send_accept_session(struct client_info *client, RequestSession * req)
         int check_time = CHECK_TIMES;
         while (check_time-- && bind(testfd, (struct sockaddr *)&local_addr,
                                     sizeof(struct sockaddr)) < 0)
-            local_addr.sin_port = port_min + rand() % 1000;
+            local_addr.sin_port = test_port;
 
         if (check_time > 0) {
             req->ReceiverPort = local_addr.sin_port;
@@ -394,19 +398,13 @@ static int receive_test_message(struct client_info *client, int session_index)
 
 int main(int argc, char *argv[])
 {
-    assert(sizeof(fd_set) == 512);
+    //assert(sizeof(fd_set) == 512);
     printf("Modified select() fd setsize: %d\n", __FD_SETSIZE);
     printf("sizeof(fd_set) %lu", sizeof(fd_set));
     char *progname = NULL;
     srand(time(NULL));
     /* Obtain the program name without the full path */
     progname = (progname = strrchr(argv[0], '/')) ? progname + 1 : *argv;
-
-    /* Sanity check */
-    /* if (getuid() == 0) { */
-    /*     fprintf(stderr, "%s should not be run as root\n", progname); */
-    /*     exit(EXIT_FAILURE); */
-    /* } */
 
     /* Parse options */
     if (parse_options(progname, argc, argv)) {
@@ -424,7 +422,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    int yes = 1;
+    int yes = 1, control_port;
     if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1)
     {
         perror("Setting SO_REUSEADDR failed");
@@ -436,7 +434,10 @@ int main(int argc, char *argv[])
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = INADDR_ANY;
-    serv_addr.sin_port = htons(SERVER_PORT);
+
+    control_port = port_override ? port_override : SERVER_PORT;
+    printf("Control port is %d\n", control_port);
+    serv_addr.sin_port = htons(control_port);
 
     used_sockets++;
     if (bind(listenfd, (struct sockaddr *)&serv_addr, sizeof(struct sockaddr)) < 0) {
@@ -450,7 +451,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    printf("Listening on port %d\n", SERVER_PORT);
+    printf("Listening on port %d\n", control_port);
 
     FD_ZERO(&read_fds);
     FD_SET(listenfd, &read_fds);
